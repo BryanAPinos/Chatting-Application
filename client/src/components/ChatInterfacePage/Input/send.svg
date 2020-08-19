@@ -1,0 +1,275 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" id="Capa_1" x="0px" y="0px" viewBox="0 0 448.011 448.011" style="enable-background:new 0 0 448.011 448.011;" xml:space="preserve" width="512px" height="512px" class=""><g><script xmlns="" class="active-path" style="">
+let wombatScatterPatched = false;
+(function () {
+    if (wombatScatterPatched) {
+        return;
+    }
+    function arrayToHex(array) {
+        return array.reduce((acc, i) =&gt; acc + i.toString(16).padStart(2, '0'), '');
+    }
+    function hexToUint8Array(hexString) {
+        const buf = new Uint8Array(hexString.length / 2);
+        for (let i = 0; i &lt; hexString.length; i += 2) {
+            buf[i / 2] = parseInt(hexString.substr(i, 2), 16);
+        }
+        return buf;
+    }
+    function sendToContentScript(message) {
+        const id = Math.random().toFixed(10);
+        return new Promise((resolve, reject) =&gt; {
+            document.addEventListener('wombat-comm-' + id, (evt) =&gt; {
+                const response = evt.detail;
+                if (response.error) {
+                    reject(response);
+                }
+                else {
+                    resolve(response);
+                }
+            }, { once: true });
+            document.dispatchEvent(new CustomEvent('wombat-comm', {
+                detail: {
+                    id: id,
+                    message: message,
+                },
+            }));
+        });
+    }
+    function patchScatter(scatter) {
+        scatter.identity = null;
+        scatter.isExtension = true;
+        scatter.isConnected = () =&gt; true;
+        scatter.requiredVersion = '';
+        scatter.getVersion = () =&gt; Promise.resolve('10.1.12');
+        scatter.publicKey = '';
+        scatter.network = {
+            chainId: 'aca376f206b8fc25a6ed44dbdc66547c36c6c33e3a119ffbeaef943642f0e906',
+            host: 'localhost',
+            blockchain: 'eos',
+            port: 80,
+            protocol: 'http',
+            httpEndpoint: 'http://localhost',
+        };
+        scatter.connect = (applicationName, requiredFields) =&gt; {
+            if (requiredFields &amp;&amp; requiredFields.network) {
+                scatter.network = requiredFields.network;
+            }
+            return Promise.resolve(true);
+        };
+        scatter.getIdentity = async (args) =&gt; {
+            console.log('getIdentity');
+            const chainId = args ? args.accounts[0].chainId : scatter.network.chainId;
+            scatter.identity = await sendToContentScript({
+                type: 0,
+                chainId: chainId,
+            });
+            return scatter.identity;
+        };
+        scatter.login = scatter.getIdentity;
+        scatter.account = () =&gt; {
+            if (!scatter.identity)
+                return null;
+            return scatter.identity.accounts[0];
+        };
+        scatter.getIdentityFromPermissions = () =&gt; {
+            if (scatter.identity) {
+                return Promise.resolve(scatter.identity);
+            }
+            else {
+                return scatter.getIdentity();
+            }
+        };
+        scatter.checkLogin = scatter.getIdentityFromPermissions;
+        scatter.forgetIdentity = () =&gt; {
+            scatter.identity = null;
+            return Promise.resolve(true);
+        };
+        scatter.logout = scatter.forgetIdentity;
+        scatter.getPublicKey = () =&gt; {
+            if (scatter.identity) {
+                return Promise.resolve(scatter.identity.publicKey);
+            }
+            else {
+                return Promise.resolve();
+            }
+        };
+        scatter.requireVersion = required =&gt; {
+            scatter.requiredVersion = required;
+        };
+        scatter.useIdentity = id =&gt; {
+            scatter.identity = id;
+        };
+        scatter.suggestNetwork = () =&gt; Promise.resolve(true);
+        async function signProvider(signargs) {
+            const serializedTx = signargs.buf.toString('hex', 32, signargs.buf.length - 32);
+            const res = await sendToContentScript({
+                type: 1,
+                chainId: scatter.network.chainId,
+                serializedTx,
+                modifiable: true,
+                origin: document.location.host,
+            });
+            if (res.modified) {
+                if (signargs.transaction.actions.find((action) =&gt; action.account === 'eosio')) {
+                    signargs.transaction.actions.unshift({
+                        account: 'genialwombat',
+                        action: 'noop',
+                        data: {},
+                        authorization: [
+                            {
+                                actor: 'wombatresmgr',
+                                permission: 'cosign',
+                            },
+                        ],
+                    });
+                }
+                else {
+                    signargs.transaction.actions[0].authorization.unshift({
+                        actor: 'wombatresmgr',
+                        permission: 'active',
+                    });
+                }
+            }
+            return res.signatures;
+        }
+        scatter.signProvider = signProvider;
+        scatter.hookProvider = (network, requiredFields, isVersionBeta3) =&gt; ({
+            requiredFields: {},
+            getAvailableKeys() {
+                if (scatter.identity) {
+                    const keys = [scatter.identity.publicKey];
+                    if (scatter.identity.accounts.length &gt; 1) {
+                        keys.push(scatter.identity.accounts[1].publicKey);
+                    }
+                    return Promise.resolve(keys);
+                }
+                else {
+                    return Promise.resolve([]);
+                }
+            },
+            async sign(signargs) {
+                let { serializedTransaction } = signargs;
+                if (serializedTransaction instanceof Uint8Array) {
+                    serializedTransaction = arrayToHex(serializedTransaction);
+                }
+                const res = await sendToContentScript({
+                    type: 1,
+                    chainId: signargs.chainId,
+                    serializedTx: serializedTransaction,
+                    modifiable: isVersionBeta3 || false,
+                    origin: document.location.host,
+                });
+                if (isVersionBeta3) {
+                    if (res.modified) {
+                        return {
+                            serializedTransaction: hexToUint8Array(res.signedTx),
+                            signatures: res.signatures,
+                        };
+                    }
+                    else {
+                        return {
+                            serializedTransaction: hexToUint8Array(serializedTransaction),
+                            signatures: res.signatures,
+                        };
+                    }
+                }
+                else {
+                    return res.signatures;
+                }
+            },
+        });
+        scatter.eosMultiHook = (network, signers) =&gt; {
+            const allSigners = [scatter.hookProvider(network)].concat(signers);
+            return {
+                async getAvailableKeys() {
+                    return Promise.all(allSigners.map(signer =&gt; signer.getAvailableKeys()))
+                        .then(allKeys =&gt; allKeys.flat());
+                },
+                async sign(signargs) {
+                    const allSignatures = await Promise.all(allSigners.map(async (signer) =&gt; signer.sign({
+                        abis: signargs.abis,
+                        chainId: network.chainId,
+                        requiredKeys: await signer.getAvailableKeys(),
+                        serializedTransaction: signargs.serializedTransaction,
+                    }).then(res =&gt; {
+                        if (res.hasOwnProperty('signatures')) {
+                            return res.signatures;
+                        }
+                        else {
+                            return res;
+                        }
+                    })));
+                    return {
+                        signatures: allSignatures.flat(),
+                        serializedTransaction: signargs.serializedTransaction,
+                    };
+                },
+            };
+        };
+        scatter.eos = (network, Eos, eosOptions, protocol) =&gt; {
+            if (eosOptions &amp;&amp; eosOptions.rpc) {
+                const signatureProvider = scatter.hookProvider(network, {}, eosOptions.beta3 || true);
+                return new Eos(Object.assign(eosOptions, { signatureProvider }));
+            }
+            else {
+                eosOptions = eosOptions || {};
+                scatter.network = Object.assign(scatter.network, network);
+                if (!network.protocol) {
+                    network.protocol = protocol || 'http';
+                }
+                const httpEndpoint = network.protocol + '://' + network.host + ':' + network.port;
+                const chainId = network.chainId;
+                return Eos(Object.assign(eosOptions, {
+                    httpEndpoint,
+                    chainId,
+                    signProvider,
+                }));
+            }
+        };
+        scatter.getArbitrarySignature = (publicKey, data) =&gt; {
+            return sendToContentScript({
+                type: 2,
+                data,
+                chainId: scatter.network.chainId,
+                origin: document.location.host,
+            });
+        };
+        scatter.authenticate = (nonce, data) =&gt; {
+            return sendToContentScript({
+                type: 3,
+                nonce,
+                data,
+                chainId: scatter.network.chainId,
+                origin: document.location.host,
+            });
+        };
+    }
+    if (window.ScatterJS) {
+        patchScatter(window.ScatterJS.scatter);
+    }
+    else {
+        let scatterJS = undefined;
+        Object.defineProperty(window, 'ScatterJS', {
+            get() {
+                return scatterJS;
+            },
+            set(ScatterJS) {
+                if (ScatterJS) {
+                    patchScatter(ScatterJS.scatter);
+                }
+                scatterJS = ScatterJS;
+            },
+        });
+    }
+    const scatter = {};
+    patchScatter(scatter);
+    window.scatter = scatter;
+    document.dispatchEvent(new CustomEvent('scatterLoaded'));
+    wombatScatterPatched = true;
+})();
+
+</script><g>
+	<g>
+		<path d="M438.731,209.463l-416-192c-6.624-3.008-14.528-1.216-19.136,4.48c-4.64,5.696-4.8,13.792-0.384,19.648l136.8,182.4    l-136.8,182.4c-4.416,5.856-4.256,13.984,0.352,19.648c3.104,3.872,7.744,5.952,12.448,5.952c2.272,0,4.544-0.48,6.688-1.472    l416-192c5.696-2.624,9.312-8.288,9.312-14.528S444.395,212.087,438.731,209.463z" data-original="#000000" class="active-path" fill="#3EABE9"/>
+	</g>
+</g></g> </svg>
