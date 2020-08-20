@@ -19,7 +19,8 @@ const ChatInterface = ({ location }) => {
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState([]);
   const [users, setUsers] = useState("");
-  const ENDPOINT = "localhost:5000";
+  // const ENDPOINT = "localhost:5000";
+  const ENDPOINT = "ec2-52-13-72-216.us-west-2.compute.amazonaws.com:5000";
 
   useEffect(() => {
     const { name, room } = queryString.parse(location.search);
