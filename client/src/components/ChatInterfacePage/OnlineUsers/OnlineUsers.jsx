@@ -26,14 +26,6 @@ const OnlineUsers = ({ users }) => {
       ) : (
         <p>No one else is on.</p>
       )}
-
-      {/* <p style={{ color: "#595959", fontSize: "16px" }}>
-        <img src={circleSolid}></img>
-        People Online:
-      </p>
-      <hr></hr>
-      <p>Person 1</p>
-      <p>Person 2</p> */}
     </div>
   );
 };

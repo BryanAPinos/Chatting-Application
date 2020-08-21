@@ -1,4 +1,9 @@
 const onlineUsersStyles = {
+  "@media (max-width: 750px)": {
+    online: {
+      display: "none",
+    },
+  },
   online: {
     backgroundColor: "#F0F0F0",
     width: "180px",

@@ -51,7 +51,7 @@ const chatInterfaceStyleSheet = {
     fontSize: "30px",
     fontWeight: "600",
     borderRadius: "25px 25px 0px 0px",
-    height: "60px",
+    minHeight: "60px",
     display: "flex",
     justifyContent: "center",
     alignItems: "center",

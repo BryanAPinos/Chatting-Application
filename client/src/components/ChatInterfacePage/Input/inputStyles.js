@@ -2,8 +2,8 @@ const inputStyles = {
   chatBottom: {
     display: "flex",
     justifyContent: "center",
-    alignItems: "center",
-    height: "90px",
+    maxHeight: "90px",
+    marginBottom: "15px",
     "& input": {
       borderRadius: "50px",
       border: "none",
